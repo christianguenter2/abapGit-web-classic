@@ -15,6 +15,8 @@ CLASS ZCL_ABAPGIT_WEB_SICF IMPLEMENTATION.
 
   METHOD if_http_extension~handle_request.
 
+    DATA lx_exception TYPE REF TO cx_root.
+
     mi_server = server.
 
     server->set_session_stateful( ).
@@ -23,9 +25,17 @@ CLASS ZCL_ABAPGIT_WEB_SICF IMPLEMENTATION.
         zcl_abapgit_web=>handle(
           ii_request  = me
           ii_response = me ).
-      CATCH cx_static_check.
-      " todo, show error page
-        ASSERT 1 = 2.
+      CATCH cx_static_check INTO lx_exception.
+        " zcl_abapgit_web already renders abapGit exceptions, this is the last
+        " line of defence for anything else (e.g. unexpected runtime errors)
+        server->response->set_status(
+          code   = 500
+          reason = 'Internal Server Error' ).
+        server->response->set_content_type( 'text/html' ).
+        server->response->set_cdata(
+          |<html><body><h2>abapGit error</h2><p>| &&
+          |{ cl_http_utility=>escape_html( lx_exception->get_text( ) ) }| &&
+          |</p></body></html>| ).
     ENDTRY.
 
   ENDMETHOD.

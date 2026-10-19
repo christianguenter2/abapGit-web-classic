@@ -22,6 +22,9 @@ CLASS zcl_abapgit_web DEFINITION
 
     CLASS-METHODS sapevent.
     CLASS-METHODS redirect.
+    CLASS-METHODS show_error
+      IMPORTING
+        iv_text TYPE string.
     CLASS-METHODS search_asset
       RETURNING
         VALUE(rv_found) TYPE abap_bool
@@ -36,9 +39,10 @@ CLASS zcl_abapgit_web IMPLEMENTATION.
 
   METHOD handle.
 
-    DATA lv_found    TYPE abap_bool.
-    DATA lv_path     TYPE string.
-    DATA li_progress TYPE REF TO zif_abapgit_progress.
+    DATA lv_found     TYPE abap_bool.
+    DATA lv_path      TYPE string.
+    DATA li_progress  TYPE REF TO zif_abapgit_progress.
+    DATA lx_exception TYPE REF TO zcx_abapgit_exception.
 
     gi_request = ii_request.
     gi_response = ii_response.
@@ -62,20 +66,57 @@ CLASS zcl_abapgit_web IMPLEMENTATION.
     ENDIF.
 
     lv_path = cl_http_utility=>unescape_url( ii_request->get_header_field( '~path' ) ).
-    IF lv_path = '/sap/zabapgit'.
-      redirect( ).
-    ELSEIF lv_path = c_base.
-      go_gui->go_home( zif_abapgit_definitions=>c_action-go_home ).
-    ELSEIF lv_path = |{ c_base }css/bundle.css|.
-      go_viewer->zif_abapgit_html_viewer~show_url( |css/bundle.css| ).
-    ELSEIF lv_path CP |{ c_base }sapevent:+*|.
-      sapevent( ).
-    ELSE.
-      ii_response->set_content_type( 'text/html' ).
-      ii_response->set_cdata( 'handle_request, unknown path ' && lv_path ).
-    ENDIF.
+
+    TRY.
+        IF lv_path = '/sap/zabapgit'.
+          redirect( ).
+        ELSEIF lv_path = c_base.
+          go_gui->go_home( zif_abapgit_definitions=>c_action-go_home ).
+        ELSEIF lv_path = |{ c_base }css/bundle.css|.
+          go_viewer->zif_abapgit_html_viewer~show_url( |css/bundle.css| ).
+        ELSEIF lv_path CP |{ c_base }sapevent:+*|.
+          sapevent( ).
+        ELSE.
+          ii_response->set_content_type( 'text/html' ).
+          ii_response->set_cdata( 'handle_request, unknown path ' && lv_path ).
+        ENDIF.
+      CATCH zcx_abapgit_exception INTO lx_exception.
+        show_error( lx_exception->get_text( ) ).
+    ENDTRY.
 
   ENDMETHOD.
+
+  METHOD show_error.
+
+    DATA lv_html TYPE string.
+    DATA lv_text TYPE string.
+
+    lv_text = cl_http_utility=>escape_html( iv_text ).
+
+    lv_html =
+      |<!DOCTYPE html>\n| &&
+      |<html lang="en">\n| &&
+      |  <head>\n| &&
+      |    <meta http-equiv="content-type" content="text/html; charset=utf-8">\n| &&
+      |    <title>abapGit - Error</title>\n| &&
+      |    <link rel="stylesheet" type="text/css" href="css/bundle.css">\n| &&
+      |  </head>\n| &&
+      |  <body>\n| &&
+      |    <div class="paddings">\n| &&
+      |      <div class="box grey">\n| &&
+      |        <h2>Error</h2>\n| &&
+      |        <p>{ lv_text }</p>\n| &&
+      |        <p><a href="./sapevent:abapgit_home">Back to repository list</a></p>\n| &&
+      |      </div>\n| &&
+      |    </div>\n| &&
+      |  </body>\n| &&
+      |</html>|.
+
+    gi_response->set_content_type( 'text/html' ).
+    gi_response->set_cdata( lv_html ).
+
+  ENDMETHOD.
+
 
   METHOD redirect.
 
@@ -101,11 +142,8 @@ CLASS zcl_abapgit_web IMPLEMENTATION.
 
   METHOD sapevent.
 
-* todo, parse and pass data
-* todo, respect GET and POST
-
     DATA: lv_action   TYPE c LENGTH 100,
-          lv_getdata  TYPE c LENGTH 100,
+          lv_getdata  TYPE c LENGTH 2000,
           lv_method   TYPE string,
           lv_body     TYPE string,
           lv_value    TYPE string,
@@ -115,9 +153,10 @@ CLASS zcl_abapgit_web IMPLEMENTATION.
 
     REPLACE FIRST OCCURRENCE OF c_base IN lv_value WITH ''.
 
-    FIND REGEX '^sapevent:([\w-]+)' IN lv_value SUBMATCHES lv_action.
-
-    FIND REGEX '\?([\w=&%.]+)' IN lv_value SUBMATCHES lv_getdata.
+* getdata must keep '/' and ':' since they are used in file paths and URLs,
+* so match everything up to the end instead of a restricted character class
+    FIND REGEX '^sapevent:([^?]+)' IN lv_value SUBMATCHES lv_action.
+    FIND REGEX '\?(.+)$' IN lv_value SUBMATCHES lv_getdata.
 
     lv_method = gi_request->get_method( ).
     IF lv_method = 'POST'.
@@ -135,12 +174,7 @@ CLASS zcl_abapgit_web IMPLEMENTATION.
       getdata  = lv_getdata
       postdata = lt_postdata ).
 
-* sdf     getdata     = iv_getdata
-* sdf     postdata    = VALUE #( )
-* sdf     query_table = VALUE #( ).
-
   ENDMETHOD.
-
 
   METHOD search_asset.
 
